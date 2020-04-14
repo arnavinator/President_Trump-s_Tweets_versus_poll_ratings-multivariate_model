@@ -15,6 +15,7 @@ library(fivethirtyeight)
 library(skimr)
 library(broom)
 library(gt)
+library(patchwork)
 
 # load tweets dataset from raw-data 
 
@@ -58,6 +59,8 @@ twoll %>%
   skim()
 
 ```
+
+
 
 
 1B) Bivariate correlations
@@ -146,7 +149,7 @@ lm(approve ~ total_tweets * high_q, data = twoll) %>%
 
 2D) Estimating Fitted Values
 
-```{r 2d, echo = FALSE}
+```{r 2d}
 
 # based on our table above, the intercept of a approval vs. high quality poll is
 # (41.629177904 - 2.701455717). The slope of this same line is (-0.005586465 +
@@ -173,6 +176,127 @@ lm(approve ~ total_tweets * high_q, data = twoll) %>%
 
 
 
+2E) Multiple Regression and the Rubin Causal Model
+
+The following is an explanatory model, as we do in fact care about which factors in specific affect approval ratings and how specific dynamics such as party-affiliations along with tweet volume affect approval. We are not only concerned about predicting the impact of tweets on approval, but are interested in the mechanism of how tweets influence different parties.
+Since the desired regression is a parallel slopes model, we see that all 3 lines will have the same slope but different y-intercepts. In particular, this model assumes that total_tweets has the same correlation coefficient with respect to approval ratings, and democrats and total_tweets:democrats have this same exact coefficient as well. This model suggests that as the number of tweets in a week increases, the rate of change in all 3 variables increases/decreases at the same rate; however, variables with a higher y-intercept have a greater impact on approval rating. Therefore, one variable will have more emphasis on determining approval ratings than other variables regardless of voter count. Nevertheless, our parallel slope model tells us the influence and emphasis of specific variables such as being Democrat have on tweet-volume-based approval rates.
+
+## Question 3: Generalize to many regressions
+
+```{r 3, echo = FALSE}
+
+# create month column in both of our datasets
+
+poll$month <- ceiling(poll$week/4)
+tweets$month <- ceiling(tweets$week/4)
+
+
+# Filter your poll data to use only the first 11 months... then join data to
+# make new combined dataset, using similar mechanism to create a grade col as
+# before. Finally, we make sure high_q is a factor col so that when we col by
+# high_q we don't get a continuous scale but two separate colors
+
+poll <- poll %>% 
+  filter(month < 12)
+
+twolln <- poll %>% 
+  left_join(tweets, by = c("week" = "week", "month" = "month")) %>% 
+  replace_na(list(total_tweets = 0)) %>% 
+  mutate(high_q = map_dbl(grade, ~ ifelse(. %in% c("A+", "A", "A-"), 
+                                  1, 
+                                  0)
+                         )
+  ) %>% 
+  mutate(high_q = as.factor(high_q))
+
+
+# make top right graph first, we need to find the average approval rating for
+# every poll grouped by month and whether the poll is a high_q poll or not.
+
+upper_right <- twolln %>% 
+  group_by(month, high_q) %>% 
+  mutate(avg_app = mean(approve)) %>% 
+  ggplot(aes(x = month, y = avg_app, color = high_q)) +
+  geom_line() +
+  theme_classic() +
+  scale_color_discrete(labels = c("A-, A, A+", "Lower than A- or missing")) +
+  labs(title = "Approval Rating by Poll Quality",
+       x = "Month",
+       y = "Average Approval Rating",
+       color = "Poll Quality")
+
+  
+# next make bottom right graph. we already have data for total tweets, but need
+# to remove the occurence of number of polls per month (which acts almost as a
+# multiplier). To find out just total_tweets per month, we count total_tweets by
+# month, and plot the total_tweets
+
+bottom_right <- twolln %>% 
+  count(month, total_tweets) %>% 
+  ggplot(aes(x = month, y = total_tweets)) +
+  geom_col() +
+  theme_classic() +
+  labs(title = "Total Tweets",
+       subtitle = "President Trump",
+       x = "Month",
+       y = "Tweets")
+
+
+# left-hand side top graph, use tidy to find correlation cofficient between
+# total_tweets and approval rating *over time*, and also add confidence
+# intervals for every coefficient to see the trends of total tweets on approval
+# rating over time. Made break in title to that better fitting for patchwork
+
+upper_left <- twolln %>% 
+  group_by(month) %>% 
+  nest() %>% 
+  mutate(mod = map(data, ~ lm(approve ~ total_tweets + high_q, data = .))) %>% 
+  mutate(reg_results = map(mod, ~ tidy(., conf.int = TRUE))) %>% 
+  mutate(coef = map_dbl(reg_results, ~ filter(., term == "total_tweets") %>% pull(estimate))) %>% 
+  mutate(lower = map_dbl(reg_results, ~ filter(., term == "total_tweets") %>% pull(conf.low))) %>%
+  mutate(upper = map_dbl(reg_results, ~ filter(., term == "total_tweets") %>% pull(conf.high))) %>% 
+  ggplot(aes(x = month, y = coef)) +
+  geom_point() +
+  geom_errorbar(aes(x = month, y = coef, ymin = lower, ymax = upper)) +
+  theme_classic() +
+  labs(title = "Effect of Total Tweeets \non Estimated Approval Rating",
+       subtitle = "Controlling for Poll Quality",
+       x = "Month",
+       y = "Coefficient") +
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+
+
+# lower left-hand side graph is very similar to the previous graph, except
+# instead of finding correlation for total_tweets and approval ratings over
+# time, we are finding the correlation between poll quality and approval rating
+# over time (controlling for total tweets). Made break in title to that better
+# fitting for patchwork
+
+bottom_left <- twolln %>% 
+  group_by(month) %>% 
+  nest() %>% 
+  mutate(mod = map(data, ~ lm(approve ~ high_q + total_tweets, data = .))) %>% 
+  mutate(reg_results = map(mod, ~ tidy(., conf.int = TRUE))) %>% 
+  mutate(coef = map_dbl(reg_results, ~ filter(., term == "high_q1") %>% pull(estimate))) %>% 
+  mutate(lower = map_dbl(reg_results, ~ filter(., term == "high_q1") %>% pull(conf.low))) %>%
+  mutate(upper = map_dbl(reg_results, ~ filter(., term == "high_q1") %>% pull(conf.high))) %>% 
+  ggplot(aes(x = month, y = coef)) +
+  geom_point() +
+  geom_errorbar(aes(x = month, y = coef, ymin = lower, ymax = upper)) +
+  theme_classic() +
+  labs(title = "Effect of Poll Quality \non Estimated Approval Rating",
+       subtitle = "Controlling for Total Tweets",
+       x = "Month",
+       y = "Coefficient") +
+  geom_hline(yintercept = 0, linetype = "dashed")
+
+
+# using patchwork, printing plot as desired
+
+upper_left + upper_right + bottom_left + bottom_right + plot_layout(widths = c(3,1))
+
+```
 
 
 
