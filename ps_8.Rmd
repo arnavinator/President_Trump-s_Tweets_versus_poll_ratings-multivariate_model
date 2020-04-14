@@ -1,0 +1,59 @@
+---
+title: "ps_8"
+author: "Arnav Srivastava"
+date: "4/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# loading relavent libraries for data analyzing 
+
+library(tidyverse)
+library(fivethirtyeight)
+library(skimr)
+
+# load tweets dataset from raw-data 
+
+load(file = "raw-data/tweetsnew.Rdata")
+
+# load Trump approval poll
+
+poll <- trump_approval_poll
+
+```
+
+## Question 1: Conduct exploratory data analysis
+
+1a)
+```{r 1a, echo = FALSE}
+
+# summarizing total tweets per week
+tweets <- tweets %>% 
+  group_by(week) %>% 
+  summarize(total_tweets = sum(week)) 
+
+
+# determine the poll’s week using the end-date of the survey.
+
+poll$week <- ceiling(as.numeric(difftime(poll$end_date, "2017-01-01", units = "days"))/7)
+
+
+
+# joining the tweet data to your poll data using the week variable
+
+twoll <- poll %>% 
+  left_join(tweets, by = "week") %>% 
+  replace_na(list(total_tweets = 0))
+
+
+
+# using skim to show data for 1a
+
+twoll %>%
+  select(total_tweets, approve) %>% 
+  skim()
+
+```
+
